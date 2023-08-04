@@ -1,2 +1,3 @@
-# LiuGuoMing_RecruitTask
-利用ros2 里的发布者和订阅者模式通过topic来传输当前时间
+# 实现过程
+1. 分别创建一个publisher节点和subscriber节点
+2. publisher使用定时器发送当前格式化后的时间串到指定的topic，subscriber订阅该topic来获取当前的时间

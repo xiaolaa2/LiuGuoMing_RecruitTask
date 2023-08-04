@@ -26,6 +26,8 @@ public:
     size_t count_;
 
 private:
+    // 检测到的人脸
+    std::vector<Rect> faces;
     // 订阅的回调函数
     void subscriber_callback(const sensor_msgs::msg::Image::ConstPtr &msg)// 注意这里的参数类型
     {
@@ -53,20 +55,41 @@ private:
         }
     }
 
+   // 利用引用的方式进行人脸检测并画出对应的矩形和标签
     void detect_face(cv::Mat & img) {
-        cv::CascadeClassifier faceDetector("./base_task4/asset/haarcascade_frontalface_default.xml");
+        cv::CascadeClassifier faceDetector;
 
-        //转换为灰度图
-        // Mat gray;
-        // cvtColor(img, gray, COLOR_BGR2GRAY);
+        // char cwd[1024];
+        // getcwd(cwd, sizeof(cwd));
+        // std::cout << cwd;  // 打印工作空间路径
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), cwd);
 
-        std::vector<Rect> faces;
-        faceDetector.detectMultiScale(img, faces);
+        // 加载特征文件
+        faceDetector.load(("./src/base_task4/asset/haarcascade_frontalface_default.xml"));
+
+        if (faceDetector.empty()) {
+            return;
+        }
+
+        faces.clear();
+        faceDetector.detectMultiScale(img, faces); // 检测人脸
+
+        int count = 1;
 
         // 遍历所有识别出的脸，画出矩形
         for (auto & face : faces) {
+
+            // 绘制标签
+            Point origin;
+            origin.x = face.x;
+            origin.y = face.y - 10; // 稍微偏上一点
+
+            std::string label = "face" + std::to_string(count);
+            putText(img, label, origin, FONT_HERSHEY_SIMPLEX, 0.5, Scalar(36,255,12), 2);
             // Scalar 是RGB格式的颜色
             rectangle(img, face, Scalar(0,255,0), 2);
+
+            count++;
         }
     }
 };
@@ -74,6 +97,7 @@ private:
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
+    // 启动服务
     rclcpp::spin(std::make_shared<ImageReciever>());
     rclcpp::shutdown();
     return 0;
