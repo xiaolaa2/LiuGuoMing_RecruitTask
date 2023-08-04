@@ -65,7 +65,7 @@ private:
         // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), cwd);
 
         // 加载特征文件
-        faceDetector.load(("./src/base_task4/asset/haarcascade_frontalface_default.xml"));
+        faceDetector.load(("./src/base_task5_bak/asset/haarcascade_frontalface_alt.xml"));
 
         if (faceDetector.empty()) {
             return;

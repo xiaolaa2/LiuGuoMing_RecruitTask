@@ -13,7 +13,7 @@ int main()
     // char cwd[1024];
     // getcwd(cwd, sizeof(cwd));
     // std::cout << cwd;  // 打印工作空间路径
-    std::string image_path = "./base_task3/asset/test_image.jpg";
+    std::string image_path = "/home/xiaolaa/ros2_workspace/src/base_task3/asset/test_image.jpg";
     Mat img = imread(image_path, IMREAD_COLOR);
     std::cout << img.size();
 

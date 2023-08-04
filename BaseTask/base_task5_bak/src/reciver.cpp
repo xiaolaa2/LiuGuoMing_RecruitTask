@@ -81,7 +81,13 @@ private:
     // 利用引用的方式进行人脸检测并画出对应的矩形和标签
     void detect_face(cv::Mat &img)
     {
+        cv::Mat img_copy;
+        img.copyTo(img_copy);
         cv::CascadeClassifier faceDetector;
+
+        cvtColor(img_copy, img_copy, COLOR_RGB2GRAY);
+        GaussianBlur(img_copy, img_copy, cv::Size(9, 9), 0);
+        
 
         // char cwd[1024];
         // getcwd(cwd, sizeof(cwd));
@@ -89,14 +95,16 @@ private:
         // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), cwd);
 
         // 加载特征文件
-        faceDetector.load(("./src/base_task4/asset/haarcascade_frontalface_default.xml"));
+        faceDetector.load(("./src/base_task5_bak/asset/haarcascade_frontalface_alt.xml"));
+        // faceDetector.load(("./src/base_task4/asset/haarcascade_frontalface_default.xml"));
+
 
         if (faceDetector.empty())
         {
             return;
         }
 
-        faceDetector.detectMultiScale(img, faces);
+        faceDetector.detectMultiScale(img_copy, faces);
 
         int count = 1;
 

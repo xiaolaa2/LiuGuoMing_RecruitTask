@@ -30,9 +30,9 @@ public:
         timer_ = this->create_wall_timer(
         500ms, std::bind(&MinimalPublisher::timer_callback, this));
 
-        // std::string rtsp1 = "rtsp://172.20.192.1/live";
-        // cv::VideoCapture cap(rtsp1, CAP_FFMPEG); // 打开默认摄像头
-        cv::VideoCapture cap("./src/base_task4/asset/face.mp4");
+        std::string rtsp1 = "rtsp://172.20.192.1/live";
+        cv::VideoCapture cap(rtsp1, CAP_FFMPEG); // 打开默认摄像头
+        // cv::VideoCapture cap("./src/base_task4/asset/face.mp4");
 
         if (!cap.isOpened())
         {
