@@ -6,7 +6,10 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/core.hpp"
+#include "opencv2/dnn.hpp"
 #include "cv_bridge/cv_bridge.h"
+
+#include <ament_index_cpp/get_package_share_directory.hpp>
 
 using std::placeholders::_1;
 using namespace cv;
@@ -16,6 +19,46 @@ enum class LightColor
 {
     RED,
     BLUE
+};
+
+
+// 灯条类
+class Light : public cv::RotatedRect
+{
+public:
+    Light() = default;
+    // 无参构造函数
+    Light(cv::RotatedRect rect) : cv::RotatedRect(rect)
+    {
+        // 先获得旋转矩形的四个顶点
+        cv::Point2f p[4];
+        rect.points(p);
+        // 按照y坐标排序四个顶点,p[0]和p[1]是上面两个顶点
+        sort(p, p + 4, [](const cv::Point2f &a, const cv::Point2f &b)
+             { return a.y < b.y; });
+        // 取两个中点进行计算
+        this->bottom = (p[0] + p[1]) / 2;
+        this->top = (p[2] + p[3]) / 2;
+
+        // 获取两个向量来获取向量的长度
+        height = norm(top - bottom);
+        width = norm(p[0] - p[1]);
+
+        auto vec = top - bottom;
+        // 将弧度转换我角度
+        auto angle = atan2(vec.y, vec.x) * 180 / CV_PI;
+
+        rotate_angle = angle;
+    }
+
+    float height;
+    float width;
+    float rotate_angle;
+    cv::Point2f top;
+    cv::Point2f bottom;
+    LightColor color;
+    std::vector<cv::Point> contour; // 该灯条的轮廓
+private:
 };
 
 class Armor : public cv::RotatedRect
@@ -48,45 +91,11 @@ public:
     float width;
     float rotate_angle;
     int number;
+    vector<Light> lights;
     Point center;
     LightColor color;
 };
 
-// 灯条类
-class Light : public cv::RotatedRect
-{
-public:
-    // 无参构造函数
-    Light(cv::RotatedRect rect) : cv::RotatedRect(rect)
-    {
-        // 先获得旋转矩形的四个顶点
-        cv::Point2f p[4];
-        rect.points(p);
-        // 按照y坐标排序四个顶点,p[0]和p[1]是下面两个顶点
-        sort(p, p + 4, [](const cv::Point2f &a, const cv::Point2f &b)
-             { return a.y < b.y; });
-        // 取两个中点进行计算
-        auto bottom = (p[0] + p[1]) / 2;
-        auto top = (p[2] + p[3]) / 2;
-
-        // 获取两个向量来获取向量的长度
-        height = norm(top - bottom);
-        width = norm(p[0] - p[1]);
-
-        auto vec = top - bottom;
-        // 将弧度转换我角度
-        auto angle = atan2(vec.y, vec.x) * 180 / CV_PI;
-
-        rotate_angle = angle;
-    }
-
-    float height;
-    float width;
-    float rotate_angle;
-    LightColor color;
-    std::vector<cv::Point> contour; // 该灯条的轮廓
-private:
-};
 
 class ArmorDetectNode : public rclcpp::Node
 {
@@ -95,6 +104,8 @@ private:
     // 预处理后图片发布
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr preprocess_img_publisher_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr number_roi_publisher_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr number_roi_publisher_2;
+    cv::dnn::Net net_;
 
     cv::Mat preProcess(const cv::Mat &img)
     {
@@ -165,6 +176,9 @@ private:
         cv::inRange(hsv, lower_red, upper_red, mask_red);
         cv::inRange(hsv, lower_blue, upper_blue, mask_blue);
 
+        // bitwise_not(mask_red, mask_red);
+        bitwise_not(mask_blue, mask_blue);   // 这里不知道为什么蓝色的灯条反倒是黑色的，非灯条区域是白色的，不清楚
+
         // imshow("red_mask", mask_red);
         // imshow("blue_mask", mask_blue);
 
@@ -184,12 +198,69 @@ private:
     }
 
     // 装甲板数字检测
-    void numberDetect(Armor &armor, const cv::Mat &img) {
-        cv::Mat roi = img(armor.boundingRect());
+    void numberDetect(Armor &armor, vector<Light> &lights, const cv::Mat &img) {
+        // 进行透视变换
+        // 原灯条的四个顶点
+          const int light_length = 12;
+        // Image size after warp
+        const int warp_height = 28;
+        const int top_light_y = (warp_height - light_length) / 2 - 1;
+        const int bottom_light_y = top_light_y + light_length;
+        const int warp_width = 54;
+        cv::Point2f lights_vertices[4] = {
+        armor.lights[0].top, armor.lights[0].bottom, armor.lights[1].bottom,
+        armor.lights[1].top};
+        cv::Point2f target_vertices[4] = {
+            cv::Point(0, bottom_light_y),
+            cv::Point(0, top_light_y),
+            cv::Point(warp_width - 1, top_light_y),
+            cv::Point(warp_width - 1, bottom_light_y),
+        };
+        cv::Mat number_image1;
+        auto rotation_matrix = cv::getPerspectiveTransform(lights_vertices, target_vertices);
+        cv::warpPerspective(img, number_image1, rotation_matrix, cv::Size(warp_width, warp_height));
+        // RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "%d %d", armor.lights[0].bottom.x, armor.lights[0].bottom.y);
+
+          // Number ROI size
+        const cv::Size roi_size(28, warp_height);
+        // imshow("test", number_image1(Rect(Point((warp_width / 2) - (roi_size.width / 2), 0), roi_size)));
+        // 先预处理将原始图片内散光区域去除
+
+        // cv::Mat roi = img(armor.boundingRect());
+        cv::Mat roi = number_image1(Rect(Point((warp_width / 2) - (roi_size.width / 2), 0), roi_size));
         cv::Mat number_image;
+        cv::Mat hsv_roi;
+        cv::Mat mask_color;
+        cv::Mat result;
+
+        if (armor.color == LightColor::BLUE) {
+            cv::Scalar lower_blue(100, 50, 50);
+            cv::Scalar upper_blue(124, 255, 255);
+            cvtColor(roi, hsv_roi, COLOR_BGR2HSV);
+            cv::inRange(hsv_roi, lower_blue, upper_blue, mask_color);
+            
+            // bitwise_not(mask_blue, mask_blue);
+
+            // imshow("www", mask_blue);
+
+            bitwise_and(roi, roi, result, mask_color); // 使用和操作来去除灯条区域
+        } else if (armor.color == LightColor::RED) {
+            cv::Scalar lower_red(0, 50, 50);
+            cv::Scalar upper_red(3, 255, 255);
+            cvtColor(roi, hsv_roi, COLOR_BGR2HSV);
+            cv::inRange(hsv_roi, lower_red, upper_red, mask_color);
+            
+            // bitwise_not(mask_blue, mask_blue);
+
+            // imshow("www", mask_blue);
+
+            bitwise_and(roi, roi, result, mask_color); // 使用和操作来去除灯条区域
+        }
+
+        // imshow("raw", result);
 
         // 二值化获得数字图像
-        cv::cvtColor(roi, number_image, cv::COLOR_RGB2GRAY);
+        cv::cvtColor(result, number_image, cv::COLOR_RGB2GRAY);
         GaussianBlur(number_image, number_image, cv::Size(5, 5), 0);
         cv::threshold(number_image, number_image, 100, 130, cv::THRESH_BINARY);
 
@@ -198,10 +269,17 @@ private:
         number_image.setTo(Scalar(255), mask); // 将mask中的像素设置为255白色
         // bitwise_not(number_image, number_image); // 将白色的字变为黑色
 
+        imshow("number", number_image);
+
         auto message = sensor_msgs::msg::Image();
         // 使用cv_bridge将视频每一帧转换为ros2的sensor信息, 同时设置Encoding的参数为bgr8
         cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", number_image).toImageMsg(message);
         number_roi_publisher_->publish(message);
+
+        auto message2 = sensor_msgs::msg::Image();
+        // 使用cv_bridge将视频每一帧转换为ros2的sensor信息, 同时设置Encoding的参数为bgr8
+        cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", result).toImageMsg(message2);
+        number_roi_publisher_2->publish(message2);
     }
 
     // 装甲板检测
@@ -314,7 +392,10 @@ private:
                         cv::Point origin(armor.boundingRect().x, armor.boundingRect().y + textSize.height);
                         cv::putText(img, string("Armor") + to_string(++count), origin, fontFace, fontScale, color, thickness);
                         rectangle(img, armor.boundingRect(), Scalar(0, 0, 255), 2);
-                        numberDetect(armor, raw_img);
+                        armor.lights.emplace_back(lights[i]);
+                        armor.lights.emplace_back(lights[k]);
+
+                        numberDetect(armor, lights,raw_img);
                         armors.emplace_back(armor);
                     }
                 }
@@ -353,6 +434,22 @@ public:
         subscription_ = this->create_subscription<sensor_msgs::msg::Image>("/color/image_raw", 10, std::bind(&ArmorDetectNode::getImage, this, _1));
         preprocess_img_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("/color/preprocess_img", 10);
         number_roi_publisher_ = this->create_publisher<sensor_msgs::msg::Image>("/color/number_roi", 10);
+        number_roi_publisher_2 = this->create_publisher<sensor_msgs::msg::Image>("/color/number_roi2", 10);
+
+        char cwd[1024];
+        getcwd(cwd, sizeof(cwd));
+        std::cout << cwd;  // 打印工作空间路径
+        RCLCPP_INFO(rclcpp::get_logger("rclcpp"), cwd);
+
+        // 获取当前包的路径
+        auto pkg_path = ament_index_cpp::get_package_share_directory("advance_task");
+        // auto model_path = pkg_path + "/model/mlp.onnx";
+        // auto label_path = pkg_path + "/model/label.txt";
+
+        // net_ = cv::dnn::readNetFromONNX(model_path);
+        // if (!net_.empty()) {
+        //     RCLCPP_INFO(this->get_logger(), "load model success");
+        // }
     }
 };
 
